@@ -29,10 +29,10 @@ pytranscript = "pytranscript:main"
 
 
 [project.urls]
-Documentation = "https://github.com/arnaud-ma/python-project-template#readme"
-Repository = "https://github.com/arnaud-ma/python-project-template"
-Source = "https://github.com/arnaud-ma/python-project-template"
-Issues = "https://github.com/arnaud-ma/python-project-template/issues"
+Documentation = "https://github.com/arnaud-ma/pytranscript#readme"
+Repository = "https://github.com/arnaud-ma/pytranscript"
+Source = "https://github.com/arnaud-ma/pytranscript"
+Issues = "https://github.com/arnaud-ma/pytranscript/issues"
 
 [tool.ruff.format]
 indent-style = "space"
