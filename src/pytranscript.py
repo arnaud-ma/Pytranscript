@@ -8,12 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
+import deep_translator
 import ffmpeg
+import tap  # typed_argument_parser
 import vosk
-from deep_translator import GoogleTranslator
-from tap import Tap
 from tqdm import tqdm
-from vosk import KaldiRecognizer, Model
 
 
 class LineError(NamedTuple):
@@ -97,15 +96,14 @@ class Transcript:
         pbar = tqdm(_iter, total=len(self.time), unit_scale=True, unit="line")
         for time, line in pbar:
             try:
-                translator = GoogleTranslator(source=self.language, target=target)
+                translator = deep_translator.GoogleTranslator(
+                    source=self.language, target=target
+                )
                 new_line = translator.translate(line)
                 translated.append(time, new_line)
             except Exception as e:  # noqa: BLE001
                 errors.append(LineError(time, line, e))
         return translated, errors
-
-
-# ---------------------------------- TRANSCRIPTION ----------------------------------- #
 
 
 def to_valid_wav(
@@ -154,7 +152,7 @@ def to_valid_wav(
 
 
 def parse_data_buffer(
-    data: bytes, recognizer: KaldiRecognizer
+    data: bytes, recognizer: vosk.KaldiRecognizer
 ) -> tuple[float, str] | None:
     """Parse the data buffer obtained from the recognizer.
     Return the time and the text.
@@ -203,7 +201,7 @@ def transcribe(
     if not _is_valid_wav_file(input_file):
         msg = f"{input_file} is not a valid WAV file"
         raise TypeError(msg)
-    model = Model(str(model_path))
+    model = vosk.Model(str(model_path))
     rec = _initialize_recognizer(model, input_file)
 
     return transcribe_with_vosk(input_file, rec, max_size)
@@ -218,11 +216,11 @@ def _is_valid_wav_file(input_file: Path) -> bool:
     return is_mono and is_pcm and is_16bit
 
 
-def _initialize_recognizer(model: Model, input_file: Path) -> KaldiRecognizer:
+def _initialize_recognizer(model: vosk.Model, input_file: Path) -> vosk.KaldiRecognizer:
     """Initialize the Vosk recognizer."""
     # for a weird reason, Wave_read does not work with Path objects
     wave_form = wave.Wave_read(str(input_file))
-    rec = KaldiRecognizer(model, wave_form.getframerate())
+    rec = vosk.KaldiRecognizer(model, wave_form.getframerate())
 
     # enable_words=True to get the time of each word
     # and in particular, the total time of the line.
@@ -233,7 +231,7 @@ def _initialize_recognizer(model: Model, input_file: Path) -> KaldiRecognizer:
 
 
 def transcribe_with_vosk(
-    input_file: Path, rec: KaldiRecognizer, max_size: int | None
+    input_file: Path, rec: vosk.KaldiRecognizer, max_size: int | None
 ) -> Transcript:
     """Transcribe the file using the Vosk recognizer."""
     wave_form = wave.Wave_read(str(input_file))
@@ -258,7 +256,7 @@ def transcribe_with_vosk(
     return transcript
 
 
-class ArgumentParser(Tap):
+class ArgumentParser(tap.Tap):
     """Transcribe a file and optionally translate the transcript."""
 
     input: Path
