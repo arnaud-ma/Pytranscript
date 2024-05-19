@@ -2,17 +2,26 @@ from __future__ import annotations
 
 import json
 import logging
+import typing
 import warnings
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import deep_translator
 import ffmpeg
 import tap  # typed_argument_parser
 import vosk
 from tqdm import tqdm
+
+if TYPE_CHECKING:
+    from os import PathLike
+type StrPath = str | PathLike[str]
+
+
+TranscriptFormat = Literal["csv", "json", "srt", "txt", "vtt"]
+TRANSCRIPT_FORMATS: tuple[TranscriptFormat] = typing.get_args(TranscriptFormat)
 
 
 class LineError(NamedTuple):
@@ -51,6 +60,23 @@ def seconds_to_time(seconds: float) -> str:
     return f"{days}d {hours:02d}:{seconds_to_time(minutes)}"
 
 
+def seconds_to_srt_time(seconds: float) -> str:
+    """Convert seconds to SRT time format.
+
+    Args:
+        seconds (float): the number of seconds
+
+    Returns:
+        str: the time in the format "hh:mm:ss,ms"
+    """
+    seconds = float(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    int_seconds, dec_seconds = str(seconds).split(".")
+    dec_seconds = dec_seconds[:3]
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(int_seconds):02d},{dec_seconds}"
+
+
 @dataclass
 class Transcript:
     """A transcript of a video or audio file.
@@ -60,11 +86,20 @@ class Transcript:
         time (list[float]): a list of the time of each line in the transcript.
         text (list[str]): a list of the text of each line in the transcript.
         language (str): the language of the transcript. Default: "auto"
+        time_end (float): the time of the last line in the transcript. If not specified,
+        it will be the time of the last line + 5 seconds.
     """
 
     time: list[float] = field(default_factory=list)
     text: list[str] = field(default_factory=list)
     language: str = "auto"
+    time_end: float | None = None
+
+    @property
+    def _time_end(self) -> float:
+        if self.time_end is not None:
+            return self.time_end
+        return self.time[-1] + 5
 
     def append(self, time: float, text: str) -> None:
         self.time.append(time)
@@ -75,6 +110,12 @@ class Transcript:
             f"{seconds_to_time(time)} : {line}"
             for time, line in zip(self.time, self.text, strict=True)
         )
+
+    def __len__(self):
+        return len(self.time)
+
+    def __getitem__(self, key):
+        return self.time[key], self.text[key]
 
     def translate(self, target: str) -> tuple[Transcript, list[LineError]]:
         """Return a translated version of the transcript.
@@ -89,11 +130,13 @@ class Transcript:
             - Transcript: the translated transcript
             - list[LineError]: a list of errors that occurred during the translation
         """
-        translated = Transcript()
+        translated = Transcript(time_end=self.time_end)
         errors: list[LineError] = []
 
         _iter = zip(self.time, self.text, strict=True)
-        pbar = tqdm(_iter, total=len(self.time), unit_scale=True, unit="line")
+        pbar = tqdm(
+            _iter, total=len(self.time), unit_scale=True, unit="line", desc="Translate"
+        )
         for time, line in pbar:
             try:
                 translator = deep_translator.GoogleTranslator(
@@ -105,9 +148,75 @@ class Transcript:
                 errors.append(LineError(time, line, e))
         return translated, errors
 
+    def srt_generator(self):
+        """Generate the transcript as a string in SRT format, line by line."""
+
+        def one_line(start, end, line):
+            start, end = map(seconds_to_srt_time, (start, end))
+            return f"{start} --> {end}\n{line}\n\n"
+
+        nb_lines = len(self)
+        for i, (time, line) in enumerate(
+            zip(self.time, self.text, strict=True), start=1
+        ):
+            if i == nb_lines:
+                end = self._time_end
+            else:
+                after_time = self.time[i]
+                end = min(after_time, time + 5)
+            yield one_line(time, end, line)
+
+    def vtt_generator(self):
+        """Generate the transcript as a string in VTT format, line by line."""
+        yield "WEBVTT\n\n"
+        for srt_line in self.srt_generator():
+            if " --> " in srt_line:
+                yield srt_line.replace(",", ".")
+            else:
+                yield srt_line
+
+    def csv_generator(self):
+        """Generate the transcript as a string in CSV format, line by line."""
+        yield "time,text\n"
+        for time, line in zip(self.time, self.text, strict=True):
+            yield f"{time},{line}\n"
+
+    def to_srt(self) -> str:
+        """Return the transcript as a string in SRT format."""
+        return "".join(self.srt_generator())
+
+    def to_vtt(self) -> str:
+        """Return the transcript as a string in VTT format."""
+        return "".join(self.vtt_generator())
+
+    def to_json(self) -> str:
+        """Return the transcript as a string in JSON format."""
+        return json.dumps({"text": self.text, "time": self.time})
+
+    def to_txt(self) -> str:
+        """Return the transcript as a string in TXT format."""
+        return str(self)
+
+    def to_csv(self) -> str:
+        """Return the transcript as a string in CSV format."""
+        return "".join(self.csv_generator())
+
+    def write(self, output: StrPath, format: TranscriptFormat) -> None:  # noqa: A002
+        """Write the transcript to a file.
+
+        Args:
+            output (Path): the path to the output file.
+            format (TranscriptFormat): the format of the transcript.
+        """
+        method = getattr(self, f"to_{format}")
+        Path(output).write_text(method())
+
 
 def to_valid_wav(
-    source: Path, output: Path | None = None, start: float = 0, end: float | None = None
+    source: StrPath,
+    output: StrPath | None = None,
+    start: float = 0,
+    end: float | None = None,
 ) -> Path:
     """Convert a video or audio file to a wav file.
 
@@ -126,13 +235,16 @@ def to_valid_wav(
     Returns:
         Path of the converted file.
     """
-    start, end = int(start * 1000), int(end * 1000) if end is not None else None
+    source = Path(source)
+    start = int(start * 1000)
+    end = int(end * 1000) if end is not None else None
     wav_file = source.with_suffix(".wav")
     if wav_file == source:
         if _is_valid_wav_file(source):
             return source
-        wav_file = source.rename(f"{source.stem}_converted.wav")
-    output_path = wav_file if output is None else output
+        wav_file = Path(f'{source.with_suffix("")}_converted.wav')
+
+    output_path = wav_file if output is None else Path(output)
 
     args = {"ss": start, "loglevel": "warning"}
     if end is not None:
@@ -172,7 +284,7 @@ def parse_data_buffer(
 
 
 def transcribe(
-    input_file: Path, model_path: Path, max_size: int | None = None
+    input_file: StrPath, model_path: StrPath, max_size: int | None = None
 ) -> Transcript:
     """Transcribe a  mono PCM 16-bit WAV file using a vosk model
     (https://alphacephei.com/vosk/models).
@@ -190,6 +302,9 @@ def transcribe(
     Returns:
         Transcript: the transcript of the file
     """
+    input_file = Path(input_file)
+    model_path = Path(model_path)
+
     if not input_file.is_file():
         msg = f"{input_file} not found"
         raise FileNotFoundError(msg)
@@ -209,7 +324,14 @@ def transcribe(
 
 def _is_valid_wav_file(input_file: Path) -> bool:
     """Validate if the input file is a valid WAV file."""
-    wf = wave.Wave_read(str(input_file))
+    try:
+        wf = wave.Wave_read(str(input_file))
+    except wave.Error as e:
+        # if it is not a valid wav file for wave_read itself
+        if "unknown format" in str(e):
+            return False
+        raise e from None
+
     is_mono = wf.getnchannels() == 1
     is_pcm = wf.getcomptype() == "NONE"
     is_16bit = wf.getsampwidth() == 2  # noqa: PLR2004
@@ -218,7 +340,6 @@ def _is_valid_wav_file(input_file: Path) -> bool:
 
 def _initialize_recognizer(model: vosk.Model, input_file: Path) -> vosk.KaldiRecognizer:
     """Initialize the Vosk recognizer."""
-    # for a weird reason, Wave_read does not work with Path objects
     wave_form = wave.Wave_read(str(input_file))
     rec = vosk.KaldiRecognizer(model, wave_form.getframerate())
 
@@ -231,16 +352,21 @@ def _initialize_recognizer(model: vosk.Model, input_file: Path) -> vosk.KaldiRec
 
 
 def transcribe_with_vosk(
-    input_file: Path, rec: vosk.KaldiRecognizer, max_size: int | None
+    input_file: StrPath, rec: vosk.KaldiRecognizer, max_size: int | None
 ) -> Transcript:
     """Transcribe the file using the Vosk recognizer."""
+    input_file = Path(input_file)
+
     wave_form = wave.Wave_read(str(input_file))
     file_size = input_file.stat().st_size
     if max_size is not None and max_size < file_size:
         file_size = max_size
-    pbar = tqdm(total=file_size, unit="B", unit_scale=True)
+    pbar = tqdm(
+        total=file_size, unit="B", unit_scale=True, desc=f"Transcribe {input_file}"
+    )
 
-    transcript = Transcript()
+    time_end = wave_form.getnframes() / wave_form.getframerate()
+    transcript = Transcript(time_end=time_end)
     total_data = 0
     len_data = 1  # initialize with 1 to enter the loop
     while len_data > 0 and total_data < file_size:
@@ -256,6 +382,9 @@ def transcribe_with_vosk(
     return transcript
 
 
+AllTranscriptFormats = TranscriptFormat | Literal["all"]
+
+
 class ArgumentParser(tap.Tap):
     """Transcribe a file and optionally translate the transcript."""
 
@@ -263,7 +392,16 @@ class ArgumentParser(tap.Tap):
     "the path to the audio file"
 
     output: Path | None = None
-    "the path to the output file. Default: input file with .txt extension"
+    """
+    the path to the output file. Default: same as the input file with only the extension
+    changed
+    """
+
+    format: str = "all"
+    """
+    the format of the transcript. Must be one of 'csv', 'json', 'srt', 'txt', 'vtt'
+    or 'all'. Default: 'all'
+    """
 
     model: Path = Path("model")
     "the path to the vosk model"
@@ -291,6 +429,10 @@ class ArgumentParser(tap.Tap):
     3: debug. Default: 2."""
 
     def process_args(self):
+        if self.format not in typing.get_args(AllTranscriptFormats):
+            msg = f"bad transcript format: {self.format}"
+            raise ValueError(msg)
+
         vosk.SetLogLevel(-1)  # disable vosk logs
         match self.verbosity:
             case 0:
@@ -309,6 +451,7 @@ class ArgumentParser(tap.Tap):
     def configure(self):
         self.add_argument("input")
         self.add_argument("-o", "--output")
+        self.add_argument("-f", "--format")
         self.add_argument("-m", "--model")
         self.add_argument("-li", "--lan_input")
         self.add_argument("-lo", "--lan_output")
@@ -316,33 +459,44 @@ class ArgumentParser(tap.Tap):
         self.add_argument("-e", "--end")
         self.add_argument("-v", "--verbosity")
 
+    def get_output(self, fmt: TranscriptFormat) -> Path:
+        if self.output is None:
+            if self.format == "all":
+                return self.input.with_suffix(f".{fmt}")
+            return self.input.with_suffix(f".{fmt}")
+        return self.output
+
+    def translate(self, transcript: Transcript):
+        if self.lan_output is None:
+            return transcript
+
+        new_transcript, errors = transcript.translate(self.lan_output)
+        if errors:
+            lines = (f"{time} : {line} : {error}" for time, line, error in errors)
+            logging.warning(f"Errors during the translation: {"\n".join(lines)}")
+        return new_transcript
+
 
 # ruff: noqa: G004
 def main():
     logging.basicConfig(level=logging.INFO)
     parser = ArgumentParser()
     args = parser.parse_args()
-
     logging.info(f"Convert {args.input} to WAV format")
     wav_file = to_valid_wav(args.input, start=args.start, end=args.end)
 
     logging.info(f"Transcribe {wav_file}...")
     transcript = transcribe(wav_file, args.model, args.max_size)
-    transcript.language = args.lan_input
-
-    if args.lan_output is not None:
-        new_transcript, errors = transcript.translate(args.lan_output)
-        if errors:
-            lines = (f"{time} : {line} : {error}" for time, line, error in errors)
-            logging.warning(f"Errors during the translation: {"\n".join(lines)}")
-    else:
-        new_transcript = transcript
-
-    if args.output is None:
-        args.output = Path(args.input).with_suffix(".txt")
-
-    with args.output.open("w", encoding="utf-8") as f:
-        f.write(str(new_transcript))
 
     if not args.keep_wav:
         wav_file.unlink()
+
+    transcript.language = args.lan_input
+
+    new_transcript = args.translate(transcript)
+
+    if args.format == "all":
+        for fmt in TRANSCRIPT_FORMATS:
+            new_transcript.write(args.get_output(fmt), fmt)
+    else:
+        new_transcript.write(args.get_output(args.format), args.format)
