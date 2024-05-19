@@ -27,6 +27,7 @@ pytranscript INPUT_FILE [OPTIONS]
 
 - `-m, --model` - Path to the Vosk model directory. Always required.
 - `-o, --output` - Output file where the text will be saved. Default: input file name with `.txt` extension.
+- `-f, --format` - Format of the transcript. Must be one of 'csv', 'json', 'srt', 'txt', 'vtt' or 'all'. Default: input file extension.
 - `-li, --lang_input` - Language of the input / the model. Default: auto.
 - `-lo --lang_input` - Language to translate the text to. Default: no translation.
 - `-s, --start` - Start time of the audio to transcribe in seconds.
@@ -40,28 +41,27 @@ pytranscript INPUT_FILE [OPTIONS]
 The most basic usage is:
 
 ```bash
-pytranscript video.mp4 -m vosk-model-en-us-aspire-0.2 -lo fr
+pytranscript video.mp4 -m vosk-model-en-us-aspire-0.2 -lo fr -f srt
 ```
 
-Where `vosk-model-en-us-aspire-0.2` is the Vosk model directory. The text will be translated from English to French, and the output will be saved in a file named `video.txt`.
+Where `vosk-model-en-us-aspire-0.2` is the Vosk model directory. The text will be translated from English to French, and the output will be saved in `video.srt`.
 
 Using the `keep-wav` option can be useful if you want to do many transcriptions within the same file, allowing you to use the same `.wav` file for each transcription, thus saving conversion time.
  ⚠️ The `.wav` file is cropped according to the start and end time options.
 
 ### API
 
-The API provides a Transcript object containing the time and text. The `translate` method can be used to get another Transcript object with the translated text. The output saved in a file in the cli is just the string
-`str(transcript)`.
+The API provides a Transcript object containing the time and text. The `translate` method can be used to get another Transcript object with the translated text. The output saved in a file in the cli is just a method
+`to_{format}` of the Transcript object.
 
 A reproduction of the previous example using the API:
 
 ```python
 import pytranscript as pt
 
-wav_file = pt.to_valid_wav('video.mp4', "video.wav", start=0, end=None)
-transcript = pt.transcribe(wav_file, model='vosk-model-en-us-aspire-0.2', max_size=None)
-transcript_fr = transcript.translate('fr')
+wav_file = pt.to_valid_wav("video.mp4", "video.wav", start=0, end=None)
+transcript = pt.transcribe(wav_file, model="vosk-model-en-us-aspire-0.2", max_size=None)
+transcript_fr, errors = transcript.translate("fr")
 
-with open('video.txt', 'w', encoding="utf8") as f:
-    f.write(str(transcript_fr))
+transcript_fr.write("video.srt")
 ```

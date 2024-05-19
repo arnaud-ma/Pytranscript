@@ -88,6 +88,18 @@ class Transcript:
         language (str): the language of the transcript. Default: "auto"
         time_end (float): the time of the last line in the transcript. If not specified,
         it will be the time of the last line + 5 seconds.
+
+    Methods:
+        append(time: float, text: str) -> None: append a new line to the transcript
+        translate(target: str) -> tuple[Transcript, list[LineError]]: translate the
+            transcript to the target language
+        {srt or vtt or csv or txt}_generator() -> generator: generate t
+            the transcript as a string in SRT, VTT, CSV, JSON or TXT format,
+            line by line
+        to_{srt or vtt or csv or txt or json}() -> str: return the transcript
+            as a string in SRT, VTT, CSV, JSON or TXT format
+        write(output: StrPath) -> None: write the transcript to a file, the format
+            will be inferred from the file extension
     """
 
     time: list[float] = field(default_factory=list)
@@ -104,12 +116,6 @@ class Transcript:
     def append(self, time: float, text: str) -> None:
         self.time.append(time)
         self.text.append(text)
-
-    def __str__(self):
-        return "\n".join(
-            f"{seconds_to_time(time)} : {line}"
-            for time, line in zip(self.time, self.text, strict=True)
-        )
 
     def __len__(self):
         return len(self.time)
@@ -181,6 +187,11 @@ class Transcript:
         for time, line in zip(self.time, self.text, strict=True):
             yield f"{time},{line}\n"
 
+    def txt_generator(self):
+        """Generate the transcript as a string in TXT format, line by line."""
+        for time, line in zip(self.time, self.text, strict=True):
+            yield f"{seconds_to_time(time)} : {line}\n"
+
     def to_srt(self) -> str:
         """Return the transcript as a string in SRT format."""
         return "".join(self.srt_generator())
@@ -195,21 +206,28 @@ class Transcript:
 
     def to_txt(self) -> str:
         """Return the transcript as a string in TXT format."""
-        return str(self)
+        return "".join(self.txt_generator())
 
     def to_csv(self) -> str:
         """Return the transcript as a string in CSV format."""
         return "".join(self.csv_generator())
 
-    def write(self, output: StrPath, format: TranscriptFormat) -> None:  # noqa: A002
+    def write(self, output: StrPath) -> None:
         """Write the transcript to a file.
 
         Args:
-            output (Path): the path to the output file.
-            format (TranscriptFormat): the format of the transcript.
+            output (Path): the path to the output file. The format will be inferred
+            from the file extension.
+            It must be one of 'csv', 'json', 'srt', 'txt' or 'vtt'.
         """
-        method = getattr(self, f"to_{format}")
-        Path(output).write_text(method())
+        output = Path(output)
+        fmt = output.suffix[1:]  # type: ignore
+        if fmt not in TRANSCRIPT_FORMATS:
+            msg = f"Unknown format for {output.name}: {fmt}"
+            raise ValueError(msg)
+
+        method = getattr(self, f"to_{fmt}")
+        output.write_text(method())
 
 
 def to_valid_wav(
@@ -284,14 +302,14 @@ def parse_data_buffer(
 
 
 def transcribe(
-    input_file: StrPath, model_path: StrPath, max_size: int | None = None
+    input_file: StrPath, model: StrPath, max_size: int | None = None
 ) -> Transcript:
     """Transcribe a  mono PCM 16-bit WAV file using a vosk model
     (https://alphacephei.com/vosk/models).
 
     Args:
         input_file (str): the transcript file, must be a mono PCM 16-bit WAV file.
-        model_path (str): the vosk model path
+        model (str): the vosk model path
         max_size (bool, optional): Transcribe only the first max_size bytes of the file.
         If not specified, the whole file will be transcribed.
 
@@ -303,21 +321,21 @@ def transcribe(
         Transcript: the transcript of the file
     """
     input_file = Path(input_file)
-    model_path = Path(model_path)
+    model = Path(model)
 
     if not input_file.is_file():
         msg = f"{input_file} not found"
         raise FileNotFoundError(msg)
 
-    if not model_path.exists():
-        msg = f"{model_path} not found"
+    if not model.exists():
+        msg = f"{model} not found"
         raise FileNotFoundError(msg)
 
     if not _is_valid_wav_file(input_file):
         msg = f"{input_file} is not a valid WAV file"
         raise TypeError(msg)
-    model = vosk.Model(str(model_path))
-    rec = _initialize_recognizer(model, input_file)
+    vosk_model = vosk.Model(str(model))
+    rec = _initialize_recognizer(vosk_model, input_file)
 
     return transcribe_with_vosk(input_file, rec, max_size)
 
@@ -397,10 +415,10 @@ class ArgumentParser(tap.Tap):
     changed
     """
 
-    format: str = "all"
+    format: str | None = None
     """
-    the format of the transcript. Must be one of 'csv', 'json', 'srt', 'txt', 'vtt'
-    or 'all'. Default: 'all'
+    the format of the transcript. Must be one of 'csv', 'json', 'srt', 'txt', 'vtt',
+    'all' or 'auto'. Default: the format will be inferred from the output file extension
     """
 
     model: Path = Path("model")
@@ -428,11 +446,32 @@ class ArgumentParser(tap.Tap):
     """Verbosity level. 0: no output, 1: only errors, 2: errors, info and progressbar,
     3: debug. Default: 2."""
 
-    def process_args(self):
-        if self.format not in typing.get_args(AllTranscriptFormats):
+    def _init_format(self):
+        if not (
+            self.format in typing.get_args(AllTranscriptFormats) or self.format is None
+        ):
             msg = f"bad transcript format: {self.format}"
             raise ValueError(msg)
 
+        match (self.output, self.format):
+            case (None, None):
+                self.format = "all"
+                self.output = self.input.with_suffix("")
+
+            case (None, _):
+                self.output = self.input.with_suffix(f".{self.format}")
+
+            case (_, None):
+                if self.output.is_dir():
+                    self.output = self.output / self.input.stem
+                    self.format = "all"
+                else:
+                    self.format = self.output.suffix[1:]
+
+            case _:
+                pass
+
+    def _init_verbose(self):
         vosk.SetLogLevel(-1)  # disable vosk logs
         match self.verbosity:
             case 0:
@@ -448,6 +487,10 @@ class ArgumentParser(tap.Tap):
                 msg = "verbosity must be 0, 1, 2 or 3"
                 raise ValueError(msg)
 
+    def process_args(self):
+        self._init_format()
+        self._init_verbose()
+
     def configure(self):
         self.add_argument("input")
         self.add_argument("-o", "--output")
@@ -460,11 +503,12 @@ class ArgumentParser(tap.Tap):
         self.add_argument("-v", "--verbosity")
 
     def get_output(self, fmt: TranscriptFormat) -> Path:
-        if self.output is None:
-            if self.format == "all":
-                return self.input.with_suffix(f".{fmt}")
+        if self.output is not None:
+            return self.output
+
+        if self.format == "all":
             return self.input.with_suffix(f".{fmt}")
-        return self.output
+        return self.input.with_suffix(f".{fmt}")
 
     def translate(self, transcript: Transcript):
         if self.lan_output is None:
@@ -482,6 +526,7 @@ def main():
     logging.basicConfig(level=logging.INFO)
     parser = ArgumentParser()
     args = parser.parse_args()
+
     logging.info(f"Convert {args.input} to WAV format")
     wav_file = to_valid_wav(args.input, start=args.start, end=args.end)
 
@@ -489,14 +534,14 @@ def main():
     transcript = transcribe(wav_file, args.model, args.max_size)
 
     if not args.keep_wav:
+        # we can remove the file if we don't need it anymore
         wav_file.unlink()
 
     transcript.language = args.lan_input
-
     new_transcript = args.translate(transcript)
 
     if args.format == "all":
         for fmt in TRANSCRIPT_FORMATS:
-            new_transcript.write(args.get_output(fmt), fmt)
+            new_transcript.write(args.get_output(fmt))
     else:
-        new_transcript.write(args.get_output(args.format), args.format)
+        new_transcript.write(args.get_output(args.format))
