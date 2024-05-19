@@ -1,7 +1,7 @@
 # https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#writing-pyproject-toml
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "pytranscript"
@@ -10,7 +10,7 @@ description = "CLI to transcript and translate audio and video files"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {file = "LICENSE"}
-keywords = ["transcript", "traduction", "audio", "video", "subtitles"]
+keywords = ["transcript", "translation", "audio", "video", "subtitles"]
 authors = [{ name = "arnaud-ma", email = "arnaudma.code@gmail.com" }]
 classifiers = [ # https://pypi.org/classifiers/
   "License :: OSI Approved :: MIT License",
@@ -107,7 +107,6 @@ unfixable = ["F401"]
 
 [tool.ruff.lint.extend-per-file-ignores]
 "__init__.py" = ["F401"]
-"*.ipynb" = ["E305"]                              # unused import
 "tests/*" = ["S", "PLR2004", "PLR6301", "TID252"]
 
 [tool.ruff.lint.pydocstyle]
