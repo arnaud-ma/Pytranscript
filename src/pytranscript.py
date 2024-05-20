@@ -400,7 +400,7 @@ def transcribe_with_vosk(
     return transcript
 
 
-AllTranscriptFormats = TranscriptFormat | Literal["all"]
+ALL_TRANSCRIPT_FORMATS = (*TRANSCRIPT_FORMATS, "all")
 
 
 class ArgumentParser(tap.Tap):
@@ -447,9 +447,7 @@ class ArgumentParser(tap.Tap):
     3: debug. Default: 2."""
 
     def _init_format(self):
-        if not (
-            self.format in typing.get_args(AllTranscriptFormats) or self.format is None
-        ):
+        if not (self.format in ALL_TRANSCRIPT_FORMATS or self.format is None):
             msg = f"bad transcript format: {self.format}"
             raise ValueError(msg)
 
