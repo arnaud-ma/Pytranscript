@@ -25,6 +25,10 @@ dependencies = [
   "typed_argument_parser>=1.9.0",
 ]
 
+[project.optional-dependencies]
+test = ["hypothesis>=6.92"]
+
+
 [project.scripts]
 pytranscript = "pytranscript:main"
 
