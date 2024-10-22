@@ -9,20 +9,20 @@ version = "0.2.4"
 description = "CLI to transcript and translate audio and video files"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {file = "LICENSE"}
+license = { file = "LICENSE" }
 keywords = ["transcript", "translation", "audio", "video", "subtitles"]
 authors = [{ name = "arnaud-ma", email = "arnaudma.code@gmail.com" }]
 classifiers = [ # https://pypi.org/classifiers/
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
- "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "deep-translator>=1.11.4",
-    "tqdm>=4.66.1",
-    "vosk>=0.3.45",
-    "ffmpeg-python>=0.2.0",
-    "typed_argument_parser>=1.9.0",
+  "deep-translator>=1.11.4",
+  "tqdm>=4.66.1",
+  "vosk>=0.3.45",
+  "ffmpeg-python>=0.2.0",
+  "typed_argument_parser>=1.9.0",
 ]
 
 [project.scripts]
@@ -34,6 +34,7 @@ Documentation = "https://github.com/arnaud-ma/pytranscript#readme"
 Repository = "https://github.com/arnaud-ma/pytranscript"
 Source = "https://github.com/arnaud-ma/pytranscript"
 Issues = "https://github.com/arnaud-ma/pytranscript/issues"
+
 
 [tool.ruff.format]
 indent-style = "space"
@@ -140,4 +141,3 @@ reportUnusedVariable = false
 reportUnusedClass = false
 reportUnusedFunction = false
 reportUnaccessedMember = false
-
