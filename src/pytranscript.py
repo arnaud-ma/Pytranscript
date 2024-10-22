@@ -38,27 +38,33 @@ def seconds_to_time(seconds: float) -> str:
 
     Returns:
         str: the time in the format :
-            -"mm:ss.ms" if 0 hours
-            -"hh:mm:ss" if 0 days
+            -"mm:ss.ms" if less than 1 hour
+            -"hh:mm:ss" if less than 1 day
             -"dd hh:mm:ss" if at least 1 day
     """
     seconds = float(seconds)
-    if seconds < 3600:  # noqa: PLR2004
+    
+    if seconds < 3600:  # Less than 1 hour
         minutes, seconds = divmod(seconds, 60)
         minutes = int(minutes)
-        if seconds == int(seconds):
-            return f"{minutes:02d}:{seconds:02d}"
+        if seconds == int(seconds):  # No decimal part in seconds
+            return f"{minutes:02d}:{int(seconds):02d}"
+        # Handle fractional seconds
         int_part, dec_part = str(seconds).split(".")
-        dec_part = dec_part[:2]
+        dec_part = dec_part[:2]  # Keep only two decimal places
         int_part = int(int_part)
         return f"{minutes:02d}:{int(int_part):02d}.{dec_part}"
-    if seconds < 86400:  # noqa: PLR2004
-        hours, minutes = divmod(seconds, 3600)
-        return f"{hours}:{seconds_to_time(minutes)}"
-    days, hours = divmod(seconds, 86400)
-    hours, minutes = divmod(hours, 3600)
-    return f"{days}d {hours:02d}:{seconds_to_time(minutes)}"
-
+    
+    elif seconds < 86400:  # Less than 1 day
+        hours, remaining_seconds = divmod(seconds, 3600)
+        minutes, seconds = divmod(remaining_seconds, 60)
+        return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+    
+    else:  # 1 day or more
+        days, remaining_seconds = divmod(seconds, 86400)
+        hours, remaining_seconds = divmod(remaining_seconds, 3600)
+        minutes, seconds = divmod(remaining_seconds, 60)
+        return f"{int(days)}d {int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
 
 def seconds_to_srt_time(seconds: float) -> str:
     """Convert seconds to SRT time format.
