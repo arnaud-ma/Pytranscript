@@ -23,6 +23,10 @@ type StrPath = str | PathLike[str]
 TranscriptFormat = Literal["csv", "json", "srt", "txt", "vtt"]
 TRANSCRIPT_FORMATS: tuple[TranscriptFormat] = typing.get_args(TranscriptFormat)
 
+SECONDS_IN_MINUTE = 60
+SECONDS_IN_HOUR = SECONDS_IN_MINUTE * 60
+SECONDS_IN_DAY = SECONDS_IN_HOUR * 24
+
 
 class LineError(NamedTuple):
     time: float
@@ -34,37 +38,33 @@ def seconds_to_time(seconds: float) -> str:
     """Convert seconds to time.
 
     Args:
-        seconds (float): the number of seconds
+        seconds (float): the number of seconds. It must be less than 2**32.
 
     Returns:
         str: the time in the format :
             -"mm:ss.ms" if less than 1 hour
             -"hh:mm:ss" if less than 1 day
             -"dd hh:mm:ss" if at least 1 day
+
+    Raises:
+        ValueError: if seconds > 2**32
     """
+    if seconds > 2**32:
+        # conversion from float to int here will lose precision
+        msg = "seconds >= 2**32 are not supported because of loss of precision."
+        raise ValueError(msg)
+
     seconds = float(seconds)
-    
-    if seconds < 3600:  # Less than 1 hour
-        minutes, seconds = divmod(seconds, 60)
-        minutes = int(minutes)
-        if seconds == int(seconds):  # No decimal part in seconds
-            return f"{minutes:02d}:{int(seconds):02d}"
-        # Handle fractional seconds
-        int_part, dec_part = str(seconds).split(".")
-        dec_part = dec_part[:2]  # Keep only two decimal places
-        int_part = int(int_part)
-        return f"{minutes:02d}:{int(int_part):02d}.{dec_part}"
-    
-    elif seconds < 86400:  # Less than 1 day
-        hours, remaining_seconds = divmod(seconds, 3600)
-        minutes, seconds = divmod(remaining_seconds, 60)
-        return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
-    
-    else:  # 1 day or more
-        days, remaining_seconds = divmod(seconds, 86400)
-        hours, remaining_seconds = divmod(remaining_seconds, 3600)
-        minutes, seconds = divmod(remaining_seconds, 60)
-        return f"{int(days)}d {int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"
+    days, seconds = divmod(seconds, SECONDS_IN_DAY)
+    hours, seconds = divmod(seconds, SECONDS_IN_HOUR)
+    minutes, seconds = divmod(seconds, SECONDS_IN_MINUTE)
+
+    if days > 0:
+        return f"{int(days)}d {int(hours):02d}:{int(minutes):02d}:{round(seconds):02d}"
+    if hours > 0:
+        return f"{int(hours):02d}:{int(minutes):02d}:{round(seconds):02d}"
+    return f"{int(minutes):02d}:{seconds:05.2f}"
+
 
 def seconds_to_srt_time(seconds: float) -> str:
     """Convert seconds to SRT time format.
@@ -76,11 +76,10 @@ def seconds_to_srt_time(seconds: float) -> str:
         str: the time in the format "hh:mm:ss,ms"
     """
     seconds = float(seconds)
-    hours, remainder = divmod(seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    int_seconds, dec_seconds = str(seconds).split(".")
-    dec_seconds = dec_seconds[:3]
-    return f"{int(hours):02d}:{int(minutes):02d}:{int(int_seconds):02d},{dec_seconds}"
+    hours, remainder = divmod(seconds, SECONDS_IN_HOUR)
+    minutes, seconds = divmod(remainder, SECONDS_IN_MINUTE)
+    seconds_str = f"{round(seconds, 3):06.3f}".replace(".", ",")
+    return f"{int(hours):02d}:{int(minutes):02d}:{seconds_str}"
 
 
 @dataclass
@@ -467,7 +466,7 @@ class ArgumentParser(tap.Tap):
 
             case (_, None):
                 if self.output.is_dir():
-                    self.output = self.output / self.input.stem
+                    self.output /= self.input.stem
                     self.format = "all"
                 else:
                     self.format = self.output.suffix[1:]
