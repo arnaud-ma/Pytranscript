@@ -65,3 +65,8 @@ transcript_fr, errors = transcript.translate("fr")
 
 transcript_fr.write("video.srt")
 ```
+
+## Contributing
+
+Contributions are welcome! For major changes, please open an issue first to discuss what you would like to change.
+Tests can be run with `pytest`. Use `ruff` with `ruff format .` to format the code before committing.
