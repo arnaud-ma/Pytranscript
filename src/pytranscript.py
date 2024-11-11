@@ -163,10 +163,12 @@ class Transcript:
     def srt_generator(self):
         """Generate the transcript as a string in SRT format, line by line."""
 
-        def one_line(count, start, end, line):
+        def one_block(count, start, end, line):
             start = seconds_to_srt_time(start)
             end = seconds_to_srt_time(end)
-            return f"{count}\n{start} --> {end}\n{line}\n\n"
+            yield f"{count}\n"
+            yield f"{start} --> {end}\n"
+            yield f"{line}\n\n"
 
         nb_lines = len(self)
         for i, (time, line) in enumerate(
@@ -181,7 +183,7 @@ class Transcript:
                 after_time = self.time[i]
                 time_end = min(after_time, time + 5)
 
-            yield one_line(i, time, time_end, line)
+            yield from one_block(i, time, time_end, line)
 
     def vtt_generator(self):
         """Generate the transcript as a string in VTT format, line by line."""
