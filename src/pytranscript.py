@@ -114,7 +114,7 @@ class Transcript:
     time_end: float | None = None
 
     @property
-    def _time_end(self) -> float:
+    def _overall_time_end(self) -> float:
         if self.time_end is not None:
             return self.time_end
         return self.time[-1] + 5
@@ -163,20 +163,25 @@ class Transcript:
     def srt_generator(self):
         """Generate the transcript as a string in SRT format, line by line."""
 
-        def one_line(start, end, line):
-            start, end = map(seconds_to_srt_time, (start, end))
-            return f"{start} --> {end}\n{line}\n\n"
+        def one_line(count, start, end, line):
+            start = seconds_to_srt_time(start)
+            end = seconds_to_srt_time(end)
+            return f"{count}\n{start} --> {end}\n{line}\n\n"
 
         nb_lines = len(self)
         for i, (time, line) in enumerate(
             zip(self.time, self.text, strict=True), start=1
         ):
-            if i == nb_lines:
-                end = self._time_end
+            is_last_line = i == nb_lines
+            if is_last_line:
+                time_end = self._overall_time_end
             else:
+                # Use the start time of the next line or 5 seconds after the
+                # current time, whichever is smaller
                 after_time = self.time[i]
-                end = min(after_time, time + 5)
-            yield one_line(time, end, line)
+                time_end = min(after_time, time + 5)
+
+            yield one_line(i, time, time_end, line)
 
     def vtt_generator(self):
         """Generate the transcript as a string in VTT format, line by line."""
