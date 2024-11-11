@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from os import PathLike
 type StrPath = str | PathLike[str]
 
+SAMPLE_RATE_AUDIO = 16_000
 
 TranscriptFormat = Literal["csv", "json", "srt", "txt", "vtt"]
 TRANSCRIPT_FORMATS: tuple[TranscriptFormat] = typing.get_args(TranscriptFormat)
@@ -246,10 +247,10 @@ def to_valid_wav(
     Args:
         source (Path): the path to the file to convert.
         output (Path, optional): the path to the wav file.
-        If not specified, the wav file will be created in the same directory
-        and with the same name as the source file.
+            If not specified, the wav file will be created in the same directory
+            and with the same name as the source file.
         start (int, optional): the time in seconds to start the conversion.
-        Defaults to 0.
+            Defaults to 0.
         end (int, bool, optional): the time in seconds to end the conversion.
         If not specified, the conversion will be done until the end of the file.
         name (str, bool, optional): the name of the wav file.
@@ -269,15 +270,15 @@ def to_valid_wav(
 
     output_path = wav_file if output is None else Path(output)
 
-    args = {"ss": start, "loglevel": "warning"}
+    options_ffmpeg = {"ss": start, "loglevel": "warning"}
     if end is not None:
-        args["to"] = end
+        options_ffmpeg["to"] = end
 
     # TODO: make a proper progress bar (then not hide with loglevel=warning)
     try:
         (
-            ffmpeg.input(str(source), **args)
-            .output(str(output_path), acodec="pcm_s16le", ac=1)
+            ffmpeg.input(str(source), **options_ffmpeg)
+            .output(str(output_path), acodec="pcm_s16le", ac=1, ar=SAMPLE_RATE_AUDIO)
             .run()
         )
     except ffmpeg.Error as e:
@@ -290,7 +291,7 @@ def parse_data_buffer(
     data: bytes, recognizer: vosk.KaldiRecognizer
 ) -> tuple[float, str] | None:
     """Parse the data buffer obtained from the recognizer.
-    Return the time and the text.
+    Return the time and the text, or None if data is in a bad format.
     """
     if not recognizer.AcceptWaveform(data):
         msg = "No result found in the recognizer"
